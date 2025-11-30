@@ -1,0 +1,24 @@
+{
+  "realuser": {
+    "What is your name?": "Alice",
+    "What is your age?": "31",
+    "What is your skin type? (e.g., oily, dry, combination)": "combination",
+    "Do you have any skin concerns? (e.g., acne, sensitivity)": "acne",
+    "What is your current skincare routine?": "cleanser"
+  },
+  "madhu": {
+    "What is your name?": "madhushree",
+    "What is your age?": "fetch",
+    "What is your skin type? (e.g., oily, dry, combination)": "oily",
+    "Do you have any skin concerns? (e.g., acne, sensitivity)": "acne",
+    "What is your current skincare routine?": "normal"
+  },
+  "jahnavi": {
+    "Name?": "jahnavi",
+    "Age?": "32",
+    "Skin type (e.g., oily, dry, combination)": "dry",
+    "Skin concerns (e.g., acne, sensitivity)": "aging",
+    "Current Skincare routine": "no skincare",
+    "Budget preference": "medium range"
+  }
+}

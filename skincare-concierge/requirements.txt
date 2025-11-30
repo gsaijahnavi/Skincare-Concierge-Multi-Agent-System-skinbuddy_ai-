@@ -1,0 +1,20 @@
+# Core Python libraries
+pydantic
+pytest
+pandas
+
+# Google ADK and Gemini
+google-adk
+
+# Async file I/O (if used in older profile tool)
+aiofiles
+
+# For Google API/Service Account
+google-auth
+
+# For CLI and terminal interaction
+
+# If you use any other specific libraries, add them below
+
+# Note: If you use Jupyter or notebooks, add:
+# jupyter
