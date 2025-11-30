@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Skincare Concierge Chat</title>
+    <style>
+        body { font-family: Arial; background:#f6f6f6; }
+        #chatbox { width:60%; margin:auto; height:500px; overflow-y:scroll;
+                   background:white; padding:20px; border-radius:10px; }
+        .msg { margin:10px 0; padding:10px; border-radius:8px; }
+        .user { background:#d1e7ff; text-align:right; }
+        .bot { background:#ffeecb; text-align:left; white-space:pre-wrap; }
+        #inputBox { width:60%; margin:auto; margin-top:10px; display:flex; }
+        #msg { flex:1; padding:10px; }
+        button { padding:10px; }
+    </style>
+</head>
+<body>
+
+<h2 style="text-align:center;">💬 Skincare Concierge (Multi-Agent) </h2>
+
+<div id="chatbox"></div>
+
+<div id="inputBox">
+    <input id="msg" placeholder="Type your message...">
+    <button onclick="sendMsg()">Send</button>
+</div>
+
+<script>
+    let user_id = "user123";  // or dynamic
+    let ws = new WebSocket(`ws://127.0.0.1:8000/ws/${user_id}`);
+
+    ws.onmessage = (event) => {
+        let div = document.createElement("div");
+        div.className = "msg bot";
+        div.textContent = event.data;
+        document.getElementById("chatbox").appendChild(div);
+        document.getElementById("chatbox").scrollTop = 999999;
+    };
+
+    function sendMsg() {
+        let text = document.getElementById("msg").value;
+        if (!text.trim()) return;
+        ws.send(text);
+
+        let div = document.createElement("div");
+        div.className = "msg user";
+        div.textContent = text;
+        document.getElementById("chatbox").appendChild(div);
+        document.getElementById("chatbox").scrollTop = 999999;
+
+        document.getElementById("msg").value = "";
+    }
+</script>
+
+</body>
+</html>

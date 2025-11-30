@@ -1,10 +1,8 @@
 # orchestrator_agent.py
 
-import re
 import asyncio
 from typing import Any, Dict, Optional
 
-# Import your agents
 from agents.intake_agent import IntakeAgent
 from agents.safety_agent import SafetyAgent
 from agents.evidence_rag_agent import EvidenceRAGAgent
@@ -15,13 +13,12 @@ from agents.calendar_agent import CalendarAgent
 
 class OrchestratorAgent:
     """
-    A central agent that routes user queries to the correct sub-agent.
-
-    - Safety agent ALWAYS runs first.
-    - Intent classification decides which agent(s) should run.
-    - Supports parallel: Evidence + Product for mixed ingredient queries.
-    - Supports sequential: Product → Routine.
-    - Supports loops: Calendar plan → user confirmation → execute.
+    FULL MEMORY VERSION
+    - remembers entire conversation
+    - remembers last products, routines, evidence
+    - handles follow-up questions
+    - supports multi-turn workflows
+    - supports calendar confirmations
     """
 
     def __init__(
@@ -40,129 +37,185 @@ class OrchestratorAgent:
         self.routine_agent = routine_agent
         self.calendar_agent = calendar_agent
 
-    # -------------------------------------------------------------------
+        # ------------------------------
+        # FULL CONVERSATION MEMORY
+        # ------------------------------
+        self.conversation_history: Dict[str, list] = {}
+
+        # ------------------------------
+        # LONG TERM USER STATE MEMORY
+        # ------------------------------
+        self.user_state: Dict[str, Dict[str, Any]] = {}
+
+    # ============================================================
+    # MEMORY HELPERS
+    # ============================================================
+
+    def _init_user_state(self, user_id):
+        if user_id not in self.user_state:
+            self.user_state[user_id] = {
+                "profile": {},
+                "last_routine": None,
+                "last_products": None,
+                "last_evidence": None,
+                "pending_calendar_plan": None,
+            }
+            self.conversation_history[user_id] = []
+
+    def _remember(self, user_id, user_msg, assistant_msg):
+        """Store conversation turns."""
+        self.conversation_history[user_id].append({
+            "user": user_msg,
+            "assistant": assistant_msg
+        })
+
+    def _save_state(self, user_id, key, value):
+        self.user_state[user_id][key] = value
+
+    # ============================================================
     # INTENT CLASSIFICATION
-    # -------------------------------------------------------------------
+    # ============================================================
 
     def classify_intent(self, text: str) -> str:
         t = text.lower()
 
-        # Profile management
-        if any(k in t for k in ["profile", "create profile", "update profile", "view my profile"]):
-            return "profile"
+        # YES/NO: for confirmation
+        if t in ["yes", "no", "y", "n"]:
+            return "confirmation"
 
-        # Calendar / reminders
-        if any(k in t for k in ["reminder", "schedule", "alarm", "notify", "calendar"]):
+        # Calendar
+        if any(k in t for k in ["remind", "at ", "schedule", "alarm"]):
             return "calendar"
 
-        # Ingredient signals (Evidence)
+        # Profile
+        if "profile" in t:
+            return "profile"
+
+        # Follow-up references
+        if "those products" in t or "them" in t:
+            return "followup_products"
+
+        if "that routine" in t:
+            return "followup_routine"
+
+        if "that evidence" in t:
+            return "followup_evidence"
+
+        # Ingredient → evidence
         ING = [
-            "niacinamide", "retinol", "tretinoin", "vitamin c", "ascorbic",
-            "azelaic", "salicylic", "bha", "aha", "glycolic", "lactic",
-            "arbutin", "kojic", "tranexamic", "ceramide"
+            "niacinamide", "retinol", "tretinoin", "vitamin c", "salicylic",
+            "bha", "aha", "glycolic", "lactic", "arbutin", "kojic",
+            "tranexamic", "ceramide"
         ]
-        ingredient_found = any(i in t for i in ING)
-
-        # Product/recommendation keywords
-        product_keywords = ["suggest", "recommend", "which product", "give me a product"]
-
-        # Routine keywords
-        routine_keywords = ["routine", "am routine", "pm routine", "night routine"]
-
-        if ingredient_found and any(k in t for k in product_keywords + routine_keywords):
-            return "mixed_condition"       # → parallel Evidence + Product
-
-        if ingredient_found:
+        if any(i in t for i in ING):
             return "evidence"
 
-        if any(k in t for k in product_keywords):
+        # Product request
+        if any(k in t for k in ["suggest", "recommend"]):
             return "product"
 
-        if any(k in t for k in routine_keywords):
+        # Routine
+        if "routine" in t:
             return "routine"
 
         return "none"
 
-    # -------------------------------------------------------------------
-    # MAIN ENTRYPOINT
-    # -------------------------------------------------------------------
+    # ============================================================
+    # MAIN RUN LOOP
+    # ============================================================
 
-    async def run(self, user_id: str, query: str) -> Dict[str, Any]:
+    async def run(self, user_id: str, query: str):
 
-        # ---------------- SAFETY CHECK ----------------
-        safety_result = self.safety_agent.intercept(query)
-        if safety_result != "safe":
-            return {"intent": "unsafe", "message": safety_result}
+        # Initialize memory
+        self._init_user_state(user_id)
 
-        # ---------------- INTENT ----------------------
+        # Safety first
+        safe = self.safety_agent.intercept(query)
+        if safe != "safe":
+            return {"intent": "unsafe", "message": safe}
+
         intent = self.classify_intent(query)
 
-        # ---------------- PROFILE ---------------------
+        # ---------------------------------------------------------
+        # Handle confirmation ("yes/no")
+        # ---------------------------------------------------------
+        if intent == "confirmation":
+            pending = self.user_state[user_id]["pending_calendar_plan"]
+
+            if not pending:
+                return {"intent": "none", "message": "There is nothing to confirm."}
+
+            if query.lower() in ["yes", "y"]:
+                result = self.calendar_agent.execute(pending, confirm=True)
+                self.user_state[user_id]["pending_calendar_plan"] = None
+                return {"intent": "calendar", "result": result, "message": "Reminder set!"}
+
+            if query.lower() in ["no", "n"]:
+                self.user_state[user_id]["pending_calendar_plan"] = None
+                return {"intent": "calendar", "message": "Okay, I cancelled the reminder."}
+
+        # ---------------------------------------------------------
+        # PROFILE
+        # ---------------------------------------------------------
         if intent == "profile":
-            return await self.intake_agent.handle(user_id, query)
+            result = await self.intake_agent.handle(user_id, query)
+            self._save_state(user_id, "profile", await self.intake_agent.profile_tool.get_profile(user_id))
+            return {"intent": "profile", "result": result}
 
-        # ---------------- EVIDENCE --------------------
+        # ---------------------------------------------------------
+        # EVIDENCE
+        # ---------------------------------------------------------
         if intent == "evidence":
-            result = self.evidence_agent.run(query)
-            return {"intent": "evidence", "evidence": result}
+            ev = self.evidence_agent.run(query)
+            self._save_state(user_id, "last_evidence", ev)
+            return {"intent": "evidence", "evidence": ev}
 
-        # ---------------- PRODUCT ---------------------
+        # ---------------------------------------------------------
+        # PRODUCT
+        # ---------------------------------------------------------
         if intent == "product":
-            profile = await self._safe_get_profile(user_id)
-            result = self.product_agent.run(query, user_profile=profile)
-            return {"intent": "product", "products": result}
+            profile = self.user_state[user_id]["profile"]
+            prod = self.product_agent.run(query, user_profile=profile)
+            self._save_state(user_id, "last_products", prod)
+            return {"intent": "product", "products": prod}
 
-        # ---------------- ROUTINE ---------------------
+        # ---------------------------------------------------------
+        # ROUTINE
+        # ---------------------------------------------------------
         if intent == "routine":
-            profile = await self._safe_get_profile(user_id)
-            result = self.routine_agent.run(query, profile)
-            return {"intent": "routine", "routine": result}
+            profile = self.user_state[user_id]["profile"]
+            routine = self.routine_agent.run(query, profile)
+            self._save_state(user_id, "last_routine", routine)
+            return {"intent": "routine", "routine": routine}
 
-        # ---------------- MIXED = Parallel ------------
-        if intent == "mixed_condition":
-            profile = await self._safe_get_profile(user_id)
+        # ---------------------------------------------------------
+        # FOLLOW-UP PRODUCTS
+        # ---------------------------------------------------------
+        if intent == "followup_products":
+            last_prod = self.user_state[user_id]["last_products"]
+            if not last_prod:
+                return {"message": "I don’t have previous products to reference."}
+            return {"intent": "followup_products", "products": last_prod}
 
-            evidence_fut = asyncio.to_thread(self.evidence_agent.run, query)
-            product_fut = asyncio.to_thread(self.product_agent.run, query, profile)
-
-            evidence_result, product_result = await asyncio.gather(
-                evidence_fut, product_fut
-            )
-
-            return {
-                "intent": "mixed_condition",
-                "evidence": evidence_result,
-                "products": product_result,
-            }
-
-        # ---------------- CALENDAR ---------------------
+        # ---------------------------------------------------------
+        # CALENDAR
+        # ---------------------------------------------------------
         if intent == "calendar":
-            profile = await self._safe_get_profile(user_id)
-
-            # Step 1: Plan
+            profile = self.user_state[user_id]["profile"]
             plan = self.calendar_agent.plan(query, profile)
 
             if plan.get("needs_confirmation"):
-                # Orchestrator sends plan back, waiting for user confirm
+                self.user_state[user_id]["pending_calendar_plan"] = plan
                 return {
                     "intent": "calendar_plan",
-                    "plan": plan,
-                    "message": "Confirm? (yes/no)"
+                    "message": "Do you want me to set this reminder? (yes/no)",
+                    "plan": plan
                 }
 
-            # If no confirmation needed → execute immediately
-            execute_result = self.calendar_agent.execute(plan, confirm=True)
-            return {"intent": "calendar", "result": execute_result}
+            executed = self.calendar_agent.execute(plan, confirm=True)
+            return {"intent": "calendar", "result": executed}
 
-        # ---------------- NONE / default --------------
+        # ---------------------------------------------------------
+        # DEFAULT
+        # ---------------------------------------------------------
         return {"intent": "none", "message": "How can I help with skincare today?"}
-
-    # -------------------------------------------------------------------
-    # PROFILE LOADER SAFE
-    # -------------------------------------------------------------------
-    async def _safe_get_profile(self, user_id: str) -> Dict[str, Any]:
-        try:
-            p = await self.intake_agent.profile_tool.get_profile(user_id)
-            return p or {}
-        except Exception:
-            return {}
