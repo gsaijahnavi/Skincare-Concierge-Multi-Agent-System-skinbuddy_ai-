@@ -1,0 +1,21 @@
+# Sensitive credentials
+skincare-concierge/data/ardent-depth-470201-*.json
+skincare-concierge/config/google/client_secret.json
+skincare-concierge/config/google/token.json
+skincare-concierge/token.json
+
+# User data
+skincare-concierge/data/user_profiles.json
+skincare-concierge/data/reminders.json
+
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Excel and evidence files (optional, if not needed in repo)
+skincare-concierge/data/evidence.xlsx
+skincare-concierge/data/product_catalog.xlsx
+
+# VSCode and system files
+.vscode/
+.DS_Store
